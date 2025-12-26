@@ -71,7 +71,7 @@ function ensureWebMWriter() {
   });
 }
 
-/* ---------- Load Three.js ---------- */
+/* ---------- Load Three.js (using older version with UMD build) ---------- */
 async function loadThreeJS() {
   return new Promise((resolve, reject) => {
     if (window.THREE) {
@@ -79,7 +79,8 @@ async function loadThreeJS() {
       return loadOrbitControls().then(resolve).catch(reject);
     }
     const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js";
+    // Use r147 which has better UMD support for OrbitControls
+    script.src = "https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js";
     script.onload = () => {
       THREE = window.THREE;
       loadOrbitControls().then(resolve).catch(reject);
@@ -92,7 +93,7 @@ async function loadThreeJS() {
 function loadOrbitControls() {
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js";
+    script.src = "https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js";
     script.onload = () => {
       OrbitControls = window.THREE.OrbitControls;
       resolve();
@@ -106,10 +107,14 @@ function loadOrbitControls() {
 let system, ui = {};
 
 function buildUI() {
-  const canvasElt = document.querySelector("canvas");
+  const canvasElt = canvasEl();
   const panel = createDiv().id("controls-panel");
-  if (canvasElt && canvasElt.parentNode)
+  if (canvasElt && canvasElt.parentNode) {
     canvasElt.parentNode.insertBefore(panel.elt, canvasElt.nextSibling);
+  } else {
+    // Fallback: append to body
+    document.body.appendChild(panel.elt);
+  }
 
   panel
     .style("max-width", "1080px")
@@ -225,10 +230,12 @@ function handleBGUpload(file) {
   loadImage(file.data, img => { bgState.img = img; });
 }
 
-/* ---------- p5 setup ---------- */
+/* ---------- p5 setup (2D MODE - not WEBGL) ---------- */
 function setup() {
-  const canvas = createCanvas(1080, 1440, WEBGL);
+  // Create canvas in regular 2D mode (NOT WEBGL)
+  const canvas = createCanvas(1080, 1440);
   pixelDensity(2);
+  frameRate(60);
 
   colorMode(RGB, 255, 255, 255, 255);
   PALETTE_RGB = PALETTE_HEX.map(h => color(h));
@@ -242,7 +249,7 @@ function setup() {
   fill(0);
   textAlign(CENTER, CENTER);
   textSize(24);
-  text("Loading Three.js...", 0, 0);
+  text("Loading Three.js...", width/2, height/2);
 
   // Load Three.js asynchronously
   loadThreeJS()
@@ -259,7 +266,7 @@ function setup() {
       fill(255, 0, 0);
       textAlign(CENTER, CENTER);
       textSize(20);
-      text("Failed to load Three.js\nPlease refresh the page", 0, 0);
+      text("Failed to load Three.js\nPlease refresh the page\n\n" + err.message, width/2, height/2);
     });
 }
 
@@ -277,7 +284,7 @@ function initThreeJS(canvasElement) {
   // Renderer (use p5's canvas)
   renderer = new THREE.WebGLRenderer({
     canvas: canvasElement,
-    alpha: true, // transparent background so we can see p5's background
+    alpha: true, // transparent background
     antialias: true,
     preserveDrawingBuffer: true // needed for recording
   });
@@ -305,7 +312,7 @@ function initThreeJS(canvasElement) {
   directLight2.position.set(-400, 200, -300);
   scene.add(directLight2);
 
-  // Create environment map for reflections (simple cube camera)
+  // Create environment map for reflections
   createEnvironmentMap();
 }
 
@@ -334,7 +341,7 @@ function createEnvironmentMap() {
 
   envMap = cubeRenderTarget.texture;
 
-  // Remove the environment sphere (we only needed it for the cubemap)
+  // Remove the environment sphere
   scene.remove(envSphere);
 }
 
@@ -343,7 +350,21 @@ function draw() {
   if (!threeReady) return;
 
   // 1. Draw p5 background (solid color + optional image)
-  drawP5Background();
+  // In 2D mode, this works normally
+  background(255);
+
+  if (bgState.img) {
+    push();
+    tint(255, bgState.alpha);
+    const iw = bgState.img.width, ih = bgState.img.height;
+    const sx = width / iw, sy = height / ih;
+    const s = (bgState.mode === "cover") ? max(sx, sy) : min(sx, sy);
+    const dw = iw * s, dh = ih * s;
+    const dx = (width - dw) * 0.5;
+    const dy = (height - dh) * 0.5;
+    image(bgState.img, dx, dy, dw, dh);
+    pop();
+  }
 
   // 2. Update physics (p5-based)
   const dt = Math.min(0.033, deltaTime / 1000);
@@ -355,42 +376,17 @@ function draw() {
   // 4. Update camera controls
   controls.update();
 
-  // 5. Render Three.js scene
+  // 5. Render Three.js scene on top of p5 background
   renderer.render(scene, camera);
 
   // 6. Recording
   if (REC.active) addFrameToRecording();
 }
 
-/* ---------- p5 Background Rendering ---------- */
-function drawP5Background() {
-  // Switch to 2D mode temporarily
-  push();
-  resetMatrix();
-  camera(0, 0, (height/2) / tan(PI/6), 0, 0, 0, 0, 1, 0);
-
-  // Draw white background
-  background(255);
-
-  // Draw optional background image
-  if (bgState.img) {
-    push();
-    tint(255, bgState.alpha);
-    const iw = bgState.img.width, ih = bgState.img.height;
-    const sx = width / iw, sy = height / ih;
-    const s = (bgState.mode === "cover") ? max(sx, sy) : min(sx, sy);
-    const dw = iw * s, dh = ih * s;
-    const dx = -width/2 + (width - dw) * 0.5;
-    const dy = -height/2 + (height - dh) * 0.5;
-    image(bgState.img, dx, dy, dw, dh);
-    pop();
-  }
-
-  pop();
-}
-
 /* ---------- Keyboard ---------- */
 function keyPressed() {
+  if (!threeReady) return false;
+
   if (key === '-') system.setTargetCount(max(4, system.TARGET_COUNT - 1));
   if (key === '=') system.setTargetCount(min(32, system.TARGET_COUNT + 1));
 
@@ -411,6 +407,8 @@ function keyPressed() {
   }
 
   if (system._syncUI) system._syncUI();
+
+  return false; // Prevent default
 }
 
 /* ---------- Uniform Grid (3D broad-phase) ---------- */
@@ -498,7 +496,7 @@ class BubbleSystem {
     this.FINAL_SWEEPS = 2;
 
     // Physics (3D)
-    this.BUOY_UP = 35.0; // upward force along +Y
+    this.BUOY_UP = 35.0;
     this.DRAG = 0.25;
     this.DRIFT_ACC = 6.0;
     this.DRIFT_SCALE = 0.06;
@@ -591,7 +589,7 @@ class BubbleSystem {
       this.NOISE_TIME_SPEED
     );
 
-    b.vel.y = random(10, 25); // upward in Three.js (+Y is up)
+    b.vel.y = random(10, 25);
     this.bubbles.push(b);
   }
 
@@ -692,7 +690,7 @@ class BubbleSystem {
         b.vel.add(impB);
       }
 
-      // Add contact dents (store collision point in world space)
+      // Add contact dents
       const contactA = a.pos.copy().add(n.copy().mult(Ra));
       const contactB = b.pos.copy().add(n.copy().mult(-Rb));
 
@@ -726,7 +724,6 @@ class BubbleSystem {
       b.pos.y = maxY;
       if (b.vel.y > 0) b.vel.y = 0;
 
-      // Add waterline dent at top
       const topPoint = b.pos.copy();
       topPoint.y += R;
       b.waterlineDent(-2, topPoint, pen, this.DENT_SIGMA, this.MAX_DENT_FRAC);
@@ -759,7 +756,7 @@ class Bubble3D {
 
     this.mass = (4/3) * Math.PI * this.baseR * this.baseR * this.baseR;
 
-    this.dents = new Map(); // key -> { worldPos, strength, target, sigma, alive }
+    this.dents = new Map();
     this.activeKeys = new Set();
 
     this.age = 0;
@@ -768,24 +765,18 @@ class Bubble3D {
     this.popDuration = this.sys.POP_DURATION;
     this.readyToRemove = false;
 
-    // Three.js mesh
     this.mesh = null;
     this.geometry = null;
     this.material = null;
-    this.originalPositions = null; // store original vertex positions
+    this.originalPositions = null;
 
     this.createMesh();
   }
 
   createMesh() {
-    // Use IcosahedronGeometry for smooth, evenly distributed vertices
-    // Subdivision level 3 gives nice detail
     this.geometry = new THREE.IcosahedronGeometry(this.baseR, 3);
-
-    // Store original positions for displacement calculations
     this.originalPositions = new Float32Array(this.geometry.attributes.position.array);
 
-    // Create realistic bubble material
     this.material = new THREE.MeshPhysicalMaterial({
       color: new THREE.Color(
         red(this.color) / 255,
@@ -800,10 +791,6 @@ class Bubble3D {
       envMapIntensity: 1.2,
       clearcoat: 1.0,
       clearcoatRoughness: 0.1,
-      transmission: 0.9,
-      thickness: 0.5,
-      ior: 1.33, // index of refraction (water/soap)
-      reflectivity: 0.5,
       side: THREE.DoubleSide
     });
 
@@ -814,13 +801,9 @@ class Bubble3D {
 
   rebuildGeometry() {
     if (!this.mesh) return;
-
-    // Remove old mesh
     scene.remove(this.mesh);
     if (this.geometry) this.geometry.dispose();
     if (this.material) this.material.dispose();
-
-    // Create new mesh with updated size
     this.createMesh();
   }
 
@@ -831,9 +814,8 @@ class Bubble3D {
   applyForces(dt, BUOY, DRAG, DRIFT_ACC, DRIFT_SCALE, VMAX) {
     if (this.popping) return;
 
-    let acc = createVector(0, BUOY, 0); // buoyancy upward (+Y in Three.js)
+    let acc = createVector(0, BUOY, 0);
 
-    // Drift using 3D noise
     const nx = noise(this.pos.x * DRIFT_SCALE, (this.pos.y + frameCount * 0.5) * DRIFT_SCALE, this.pos.z * DRIFT_SCALE);
     const nz = noise(this.pos.z * DRIFT_SCALE + 100, (this.pos.y + frameCount * 0.5) * DRIFT_SCALE);
     acc.x += DRIFT_ACC * ((nx - 0.5) * 2.0);
@@ -933,20 +915,16 @@ class Bubble3D {
   updateMesh() {
     if (!this.mesh) return;
 
-    // Update position
     this.mesh.position.set(this.pos.x, this.pos.y, this.pos.z);
 
-    // Update scale (for popping animation)
     const scale = this.popScale();
     this.mesh.scale.set(scale, scale, scale);
 
-    // Update opacity (fade out when popping)
     if (this.popping) {
       const alpha = scale;
       this.material.opacity = 0.6 * alpha;
     }
 
-    // Deform geometry (vertex displacement)
     this.deformGeometry();
   }
 
@@ -959,68 +937,58 @@ class Bubble3D {
     for (let i = 0; i < vertexCount; i++) {
       const idx = i * 3;
 
-      // Get original position (local space, normalized direction)
       const ox = this.originalPositions[idx];
       const oy = this.originalPositions[idx + 1];
       const oz = this.originalPositions[idx + 2];
 
-      // Normalize to get direction
       const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
       const nx = ox / len;
       const ny = oy / len;
       const nz = oz / len;
 
-      // 1. Perlin noise wobble (3D noise based on direction)
+      // Perlin noise wobble
       const noiseX = nx * this.noiseScale;
       const noiseY = ny * this.noiseScale;
       const noiseZ = nz * this.noiseScale;
       const n = noise(noiseX + this.noiseT, noiseY + this.noiseT, noiseZ + this.noiseT);
       const wobble = (n - 0.5) * 2.0 * this.noiseAmp;
 
-      // 2. Dent deformation
+      // Dent deformation
       let dentSum = 0;
 
       for (const [, d] of this.dents) {
         if (d.alive <= 0) continue;
 
-        // Convert vertex to world space
         const worldX = this.pos.x + ox;
         const worldY = this.pos.y + oy;
         const worldZ = this.pos.z + oz;
 
-        // Distance from dent contact point
         const dx = worldX - d.worldPos.x;
         const dy = worldY - d.worldPos.y;
         const dz = worldZ - d.worldPos.z;
         const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
 
-        // Convert distance to angular distance (approximate)
         const angDist = dist / this.baseR;
-
-        // Gaussian falloff
         const g = Math.exp(-0.5 * (angDist * angDist) / (d.sigma * d.sigma));
         dentSum += d.strength * g;
       }
 
-      // Calculate final radius for this vertex
       const R = this.baseR;
       let r = R * (1.0 + wobble) * (1.0 - dentSum);
       const minR = R * 0.35;
       if (r < minR) r = minR;
 
-      // Set new position
       positions[idx] = nx * r;
       positions[idx + 1] = ny * r;
       positions[idx + 2] = nz * r;
     }
 
-    // Mark geometry as needing update
     this.geometry.attributes.position.needsUpdate = true;
-    this.geometry.computeVertexNormals(); // recompute normals for correct lighting
+    this.geometry.computeVertexNormals();
   }
 }
 
-/* ---------- Recording: start / addFrame / stop ---------- */
+/* ---------- Recording ---------- */
 async function startRecording({ mode = "pngzip", fps = 30, secs = 5 } = {}) {
   REC.mode = mode;
   REC.fps = fps | 0;
@@ -1138,5 +1106,3 @@ function triggerDownload(url, filename) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
-/* ---------- Done ---------- */
