@@ -30,7 +30,9 @@ const glassParams = {
   chromaticAberration: 0.02,
   refraction: 0.9,
   thickness: 0.2,
-  ior: 1.2
+  ior: 1.2,
+  resolution: 64,
+  roughness: 0.1
 };
 
 /* ---------- Recording state ---------- */
@@ -136,6 +138,8 @@ uniform float uChromaticAberration;
 uniform float uRefraction;
 uniform float uThickness;
 uniform float uIor;
+uniform float uTextureResolution;
+uniform float uRoughness;
 uniform vec3 uColor;
 
 varying vec3 vWorldPosition;
@@ -147,6 +151,13 @@ vec2 getUV(vec3 normal) {
   vec3 refracted = refract(viewDir, normal, 1.0 / uIor);
   vec2 uv = gl_FragCoord.xy / uResolution;
   uv += refracted.xy * uRefraction;
+
+  // Apply resolution pixelation effect
+  if (uTextureResolution < 256.0) {
+    vec2 pixelSize = vec2(1.0) / uTextureResolution;
+    uv = floor(uv / pixelSize) * pixelSize + pixelSize * 0.5;
+  }
+
   return uv;
 }
 
@@ -169,15 +180,17 @@ void main() {
 
   vec3 refractedColor = vec3(r, g, b);
 
-  // Fresnel effect for edge highlights
+  // Fresnel effect for edge highlights with roughness modulation
   vec3 viewDir = normalize(vViewPosition);
-  float fresnel = pow(1.0 - abs(dot(viewDir, normal)), 3.0);
+  float fresnelPower = mix(3.0, 1.0, uRoughness); // Roughness reduces sharpness
+  float fresnel = pow(1.0 - abs(dot(viewDir, normal)), fresnelPower);
 
-  // Mix refracted color with base color
-  vec3 finalColor = mix(refractedColor, uColor, fresnel * 0.1);
+  // Roughness affects color mixing
+  float colorMix = mix(0.1, 0.3, uRoughness);
+  vec3 finalColor = mix(refractedColor, uColor, fresnel * colorMix);
 
-  // Add some transparency based on thickness and fresnel
-  float alpha = 0.9 - fresnel * 0.2;
+  // Add some transparency based on thickness, fresnel, and roughness
+  float alpha = mix(0.9, 0.7, uRoughness) - fresnel * 0.2;
 
   gl_FragColor = vec4(finalColor, alpha);
 }
@@ -243,6 +256,14 @@ function buildUI() {
   });
   ui.ior = row("IOR (Index of Refraction)", 1, 2, glassParams.ior, 0.01, val => {
     glassParams.ior = val;
+    system.updateGlassParams();
+  });
+  ui.resolution = row("Resolution", 1, 256, glassParams.resolution, 1, val => {
+    glassParams.resolution = val;
+    system.updateGlassParams();
+  });
+  ui.roughness = row("Roughness", 0, 1, glassParams.roughness, 0.01, val => {
+    glassParams.roughness = val;
     system.updateGlassParams();
   });
 
@@ -327,6 +348,10 @@ function buildUI() {
     ui.thickness.value.html(glassParams.thickness.toFixed(2));
     ui.ior.slider.value(glassParams.ior);
     ui.ior.value.html(glassParams.ior.toFixed(2));
+    ui.resolution.slider.value(glassParams.resolution);
+    ui.resolution.value.html(glassParams.resolution);
+    ui.roughness.slider.value(glassParams.roughness);
+    ui.roughness.value.html(glassParams.roughness.toFixed(2));
     opSlider.value(bgState.alpha); opVal.html(bgState.alpha);
     modeSel.value(bgState.mode);
   };
@@ -614,6 +639,8 @@ class BubbleSystem {
         b.material.uniforms.uRefraction.value = glassParams.refraction;
         b.material.uniforms.uThickness.value = glassParams.thickness;
         b.material.uniforms.uIor.value = glassParams.ior;
+        b.material.uniforms.uTextureResolution.value = glassParams.resolution;
+        b.material.uniforms.uRoughness.value = glassParams.roughness;
       }
     }
   }
@@ -759,6 +786,8 @@ class Bubble3D {
         uRefraction: { value: glassParams.refraction },
         uThickness: { value: glassParams.thickness },
         uIor: { value: glassParams.ior },
+        uTextureResolution: { value: glassParams.resolution },
+        uRoughness: { value: glassParams.roughness },
         uColor: { value: new THREE.Color(
           red(this.color) / 255,
           green(this.color) / 255,
