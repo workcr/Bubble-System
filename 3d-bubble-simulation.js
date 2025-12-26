@@ -745,7 +745,7 @@ class Bubble3D {
     this.createMesh();
   }
   createMesh() {
-    this.geometry = new THREE.IcosahedronGeometry(this.baseR, 4); // Higher subdivision for glass shader
+    this.geometry = new THREE.IcosahedronGeometry(this.baseR, 6); // High subdivision for smooth glass surface
     this.originalPositions = new Float32Array(this.geometry.attributes.position.array);
 
     // Glass shader material with chromatic aberration
