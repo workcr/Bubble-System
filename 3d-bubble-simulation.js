@@ -1,5 +1,6 @@
-// 3D Underwater Bubbles — p5.js + Three.js (Two-Canvas Architecture)
-// Background canvas (p5.js 2D) + 3D canvas (Three.js WebGL) stacked with CSS
+// 3D Underwater Bubbles — p5.js + Three.js + Glass Shader
+// Background canvas (p5.js 2D) + 3D canvas (Three.js WebGL) with chromatic aberration glass shader
+// Inspired by Olivier Larose's 3D distorted glass effect
 // Canvas: 1080 x 1440
 
 /* ---------- Palette (literal RGB) ---------- */
@@ -11,7 +12,7 @@ let THREE, OrbitControls;
 let threeReady = false;
 let scene, camera, renderer, controls;
 let ambientLight, directLight, directLight2;
-let envMap;
+let renderTarget; // For glass shader background
 
 /* ---------- Canvas references ---------- */
 let bgCanvas; // p5.js 2D canvas for background
@@ -22,6 +23,14 @@ const bgState = {
   img: null,
   alpha: 255,
   mode: "cover"
+};
+
+/* ---------- Glass Shader Parameters ---------- */
+const glassParams = {
+  chromaticAberration: 0.02,
+  refraction: 0.9,
+  thickness: 0.2,
+  ior: 1.2
 };
 
 /* ---------- Recording state ---------- */
@@ -47,7 +56,7 @@ const REC = {
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const TAU = Math.PI * 2;
 
-/* ---------- External libs (lazy-loaded) ---------- */
+/* ---------- External libs ---------- */
 function ensureJSZip() {
   return new Promise((resolve, reject) => {
     if (window.JSZip) return resolve();
@@ -101,13 +110,84 @@ function loadOrbitControls() {
   });
 }
 
+/* ---------- Glass Shaders (Chromatic Aberration) ---------- */
+const glassVertexShader = `
+varying vec3 vWorldPosition;
+varying vec3 vNormal;
+varying vec3 vViewPosition;
+
+void main() {
+  vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+  vWorldPosition = worldPosition.xyz;
+
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  vViewPosition = -mvPosition.xyz;
+
+  vNormal = normalize(normalMatrix * normal);
+
+  gl_Position = projectionMatrix * mvPosition;
+}
+`;
+
+const glassFragmentShader = `
+uniform sampler2D uTexture;
+uniform vec2 uResolution;
+uniform float uChromaticAberration;
+uniform float uRefraction;
+uniform float uThickness;
+uniform float uIor;
+uniform vec3 uColor;
+
+varying vec3 vWorldPosition;
+varying vec3 vNormal;
+varying vec3 vViewPosition;
+
+vec2 getUV(vec3 normal) {
+  vec3 viewDir = normalize(vViewPosition);
+  vec3 refracted = refract(viewDir, normal, 1.0 / uIor);
+  vec2 uv = gl_FragCoord.xy / uResolution;
+  uv += refracted.xy * uRefraction;
+  return uv;
+}
+
+void main() {
+  vec3 normal = normalize(vNormal);
+  if (!gl_FrontFacing) {
+    normal *= -1.0;
+  }
+
+  // Chromatic aberration - separate RGB channels
+  vec2 uv = getUV(normal);
+  vec2 uvR = uv + normal.xy * uChromaticAberration;
+  vec2 uvG = uv;
+  vec2 uvB = uv - normal.xy * uChromaticAberration;
+
+  // Sample each color channel with different offsets
+  float r = texture2D(uTexture, uvR).r;
+  float g = texture2D(uTexture, uvG).g;
+  float b = texture2D(uTexture, uvB).b;
+
+  vec3 refractedColor = vec3(r, g, b);
+
+  // Fresnel effect for edge highlights
+  vec3 viewDir = normalize(vViewPosition);
+  float fresnel = pow(1.0 - abs(dot(viewDir, normal)), 3.0);
+
+  // Mix refracted color with base color
+  vec3 finalColor = mix(refractedColor, uColor, fresnel * 0.1);
+
+  // Add some transparency based on thickness and fresnel
+  float alpha = 0.9 - fresnel * 0.2;
+
+  gl_FragColor = vec4(finalColor, alpha);
+}
+`;
+
 /* ---------- UI (outside canvas) ---------- */
 let system, ui = {};
 
 function buildUI() {
   const panel = createDiv().id("controls-panel");
-
-  // Insert after canvas container
   const container = document.getElementById("canvas-container");
   if (container && container.parentNode) {
     container.parentNode.insertBefore(panel.elt, container.nextSibling);
@@ -124,7 +204,7 @@ function buildUI() {
     .style("background", "#fafafa")
     .style("font", "13px/1.35 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial");
 
-  createDiv("<b>3D Bubble Simulation Controls</b> (keys: - =  , .  g/G  1/2  3/4)").parent(panel)
+  createDiv("<b>3D Glass Bubble Simulation</b> (keys: - =  , .  g/G  1/2  3/4)").parent(panel)
     .style("margin-bottom", "8px");
 
   function row(label, min, max, value, step, oninput) {
@@ -134,16 +214,39 @@ function buildUI() {
     createSpan(label).parent(r);
     const s = createSlider(min, max, value, step).parent(r).style("width", "100%");
     const v = createSpan("" + value).parent(r).style("text-align", "right");
-    s.input(() => { v.html(s.value()); oninput(int(s.value())); });
+    s.input(() => { v.html(s.value()); oninput(Number(s.value())); });
     return { slider: s, value: v };
   }
 
+  // Bubble controls
   ui.grid = row("Grid Cell Size g/G", 100, 400, 250, 10, val => system.setGridCellSize(val));
   ui.count = row("Bubble Count - / =", 4, 32, 12, 1, val => system.setTargetCount(val));
   ui.iters = row("Collision Iters , / .", 4, 20, system.COLLISION_ITERS, 1, val => system.COLLISION_ITERS = val);
   ui.minR = row("Min Bubble Size 1/2", 40, 200, system.minR, 2, val => system.setBubbleSize(val, system.maxR));
   ui.maxR = row("Max Bubble Size 3/4", 60, 260, system.maxR, 2, val => system.setBubbleSize(system.minR, val));
 
+  // Glass shader controls
+  createDiv('<hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">').parent(panel);
+  createDiv("<b>Glass shader</b>").parent(panel).style("margin", "6px 0 4px");
+
+  ui.chromatic = row("Chromatic Aberration", 0, 0.1, glassParams.chromaticAberration, 0.001, val => {
+    glassParams.chromaticAberration = val;
+    system.updateGlassParams();
+  });
+  ui.refraction = row("Refraction", 0, 2, glassParams.refraction, 0.01, val => {
+    glassParams.refraction = val;
+    system.updateGlassParams();
+  });
+  ui.thickness = row("Thickness", 0, 1, glassParams.thickness, 0.01, val => {
+    glassParams.thickness = val;
+    system.updateGlassParams();
+  });
+  ui.ior = row("IOR (Index of Refraction)", 1, 2, glassParams.ior, 0.01, val => {
+    glassParams.ior = val;
+    system.updateGlassParams();
+  });
+
+  // Background controls
   createDiv('<hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">').parent(panel);
   createDiv("<b>Background image</b>").parent(panel).style("margin", "6px 0 4px");
 
@@ -172,6 +275,7 @@ function buildUI() {
   const clearBtn = createButton("Remove background").parent(clearRow);
   clearBtn.mousePressed(() => { bgState.img = null; });
 
+  // Export controls
   createDiv('<hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">').parent(panel);
   createDiv("<b>Export video</b>").parent(panel).style("margin", "6px 0 4px");
 
@@ -215,6 +319,14 @@ function buildUI() {
     ui.iters.slider.value(this.COLLISION_ITERS); ui.iters.value.html(this.COLLISION_ITERS);
     ui.minR.slider.value(this.minR); ui.minR.value.html(this.minR);
     ui.maxR.slider.value(this.maxR); ui.maxR.value.html(this.maxR);
+    ui.chromatic.slider.value(glassParams.chromaticAberration);
+    ui.chromatic.value.html(glassParams.chromaticAberration.toFixed(3));
+    ui.refraction.slider.value(glassParams.refraction);
+    ui.refraction.value.html(glassParams.refraction.toFixed(2));
+    ui.thickness.slider.value(glassParams.thickness);
+    ui.thickness.value.html(glassParams.thickness.toFixed(2));
+    ui.ior.slider.value(glassParams.ior);
+    ui.ior.value.html(glassParams.ior.toFixed(2));
     opSlider.value(bgState.alpha); opVal.html(bgState.alpha);
     modeSel.value(bgState.mode);
   };
@@ -227,7 +339,6 @@ function handleBGUpload(file) {
 
 /* ---------- p5 setup ---------- */
 function setup() {
-  // Create p5 canvas for background (2D)
   bgCanvas = createCanvas(1080, 1440);
   bgCanvas.parent("canvas-container");
   pixelDensity(2);
@@ -240,21 +351,19 @@ function setup() {
   randomSeed(12345);
   noiseSeed(67890);
 
-  // Show loading message on background canvas
   background(255);
   fill(0);
   textAlign(CENTER, CENTER);
   textSize(24);
   text("Loading Three.js...", width/2, height/2);
 
-  // Load Three.js and initialize
   loadThreeJS()
     .then(() => {
       initThreeJS();
       system = new BubbleSystem();
       buildUI();
       threeReady = true;
-      console.log("Three.js loaded successfully");
+      console.log("Three.js + Glass Shader loaded successfully");
     })
     .catch(err => {
       console.error(err);
@@ -266,33 +375,28 @@ function setup() {
     });
 }
 
-/* ---------- Initialize Three.js (separate canvas) ---------- */
+/* ---------- Initialize Three.js with Glass Shader ---------- */
 function initThreeJS() {
-  // Create separate canvas for Three.js
   threeCanvas = document.createElement("canvas");
-  threeCanvas.width = 1080 * 2; // Account for pixel density
+  threeCanvas.width = 1080 * 2;
   threeCanvas.height = 1440 * 2;
   threeCanvas.style.width = "1080px";
   threeCanvas.style.height = "1440px";
   threeCanvas.style.position = "absolute";
   threeCanvas.style.top = "0";
   threeCanvas.style.left = "0";
-  threeCanvas.style.pointerEvents = "auto"; // Enable mouse events for OrbitControls
+  threeCanvas.style.pointerEvents = "auto";
 
-  // Add to container
   const container = document.getElementById("canvas-container");
   container.appendChild(threeCanvas);
 
-  // Scene
   scene = new THREE.Scene();
 
-  // Camera
   const aspect = 1080 / 1440;
   camera = new THREE.PerspectiveCamera(50, aspect, 10, 10000);
   camera.position.set(0, 0, 1800);
   camera.lookAt(0, 0, 0);
 
-  // Renderer
   renderer = new THREE.WebGLRenderer({
     canvas: threeCanvas,
     alpha: true,
@@ -303,7 +407,14 @@ function initThreeJS() {
   renderer.setPixelRatio(2);
   renderer.setClearColor(0x000000, 0);
 
-  // OrbitControls
+  // Create render target for glass shader background
+  renderTarget = new THREE.WebGLRenderTarget(1080 * 2, 1440 * 2, {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    format: THREE.RGBAFormat,
+    type: THREE.UnsignedByteType
+  });
+
   controls = new OrbitControls(camera, threeCanvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
@@ -311,7 +422,6 @@ function initThreeJS() {
   controls.maxDistance = 3000;
   controls.target.set(0, 0, 0);
 
-  // Lighting
   ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
   scene.add(ambientLight);
 
@@ -322,37 +432,10 @@ function initThreeJS() {
   directLight2 = new THREE.DirectionalLight(0xaaccff, 0.4);
   directLight2.position.set(-400, 200, -300);
   scene.add(directLight2);
-
-  createEnvironmentMap();
-}
-
-/* ---------- Create Environment Map ---------- */
-function createEnvironmentMap() {
-  const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, {
-    format: THREE.RGBFormat,
-    generateMipmaps: true,
-    minFilter: THREE.LinearMipmapLinearFilter
-  });
-
-  const cubeCamera = new THREE.CubeCamera(1, 1000, cubeRenderTarget);
-  const envGeometry = new THREE.SphereGeometry(500, 32, 32);
-  const envMaterial = new THREE.MeshBasicMaterial({
-    color: 0x87ceeb,
-    side: THREE.BackSide
-  });
-  const envSphere = new THREE.Mesh(envGeometry, envMaterial);
-  scene.add(envSphere);
-
-  cubeCamera.position.set(0, 0, 0);
-  cubeCamera.update(renderer, scene);
-
-  envMap = cubeRenderTarget.texture;
-  scene.remove(envSphere);
 }
 
 /* ---------- p5 draw loop ---------- */
 function draw() {
-  // 1. Draw background on p5 canvas (2D)
   background(255);
 
   if (bgState.img) {
@@ -370,21 +453,33 @@ function draw() {
 
   if (!threeReady) return;
 
-  // 2. Update physics
   const dt = Math.min(0.033, deltaTime / 1000);
   system.update(dt);
-
-  // 3. Update Three.js meshes
   system.updateThreeMeshes();
 
-  // 4. Update camera controls
   controls.update();
 
-  // 5. Render Three.js scene on separate canvas
+  // Render background to texture for glass shader
+  renderBackgroundToTexture();
+
+  // Render scene with glass bubbles
   renderer.render(scene, camera);
 
-  // 6. Recording (composite both canvases)
   if (REC.active) addFrameToRecording();
+}
+
+function renderBackgroundToTexture() {
+  // Capture the p5 canvas as texture for glass shader refraction
+  const canvas = bgCanvas.elt;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+
+  // Update all bubble materials with the new background texture
+  for (const bubble of system.bubbles) {
+    if (bubble.material && bubble.material.uniforms) {
+      bubble.material.uniforms.uTexture.value = texture;
+    }
+  }
 }
 
 /* ---------- Keyboard ---------- */
@@ -512,6 +607,16 @@ class BubbleSystem {
     }
     if (this._syncUI) this._syncUI();
   }
+  updateGlassParams() {
+    for (const b of this.bubbles) {
+      if (b.material && b.material.uniforms) {
+        b.material.uniforms.uChromaticAberration.value = glassParams.chromaticAberration;
+        b.material.uniforms.uRefraction.value = glassParams.refraction;
+        b.material.uniforms.uThickness.value = glassParams.thickness;
+        b.material.uniforms.uIor.value = glassParams.ior;
+      }
+    }
+  }
   nextId() { return this._id++; }
   sampleRadius() { return lerp(this.minR, this.maxR, Math.pow(random(), 0.2)); }
   sampleColor() { return random(PALETTE_RGB); }
@@ -625,7 +730,7 @@ class BubbleSystem {
   updateThreeMeshes() { for (const b of this.bubbles) b.updateMesh(); }
 }
 
-/* ---------- Bubble3D ---------- */
+/* ---------- Bubble3D with Glass Shader ---------- */
 class Bubble3D {
   constructor(sys, id, pos, baseR, col, noiseAmp, noiseScale, noiseTimeSpeed) {
     this.sys = sys; this.id = id; this.pos = pos; this.vel = createVector(0, 0, 0);
@@ -640,14 +745,30 @@ class Bubble3D {
     this.createMesh();
   }
   createMesh() {
-    this.geometry = new THREE.IcosahedronGeometry(this.baseR, 3);
+    this.geometry = new THREE.IcosahedronGeometry(this.baseR, 4); // Higher subdivision for glass shader
     this.originalPositions = new Float32Array(this.geometry.attributes.position.array);
-    this.material = new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color(red(this.color) / 255, green(this.color) / 255, blue(this.color) / 255),
-      metalness: 0.0, roughness: 0.1, transparent: true, opacity: 0.6,
-      envMap: envMap, envMapIntensity: 1.2, clearcoat: 1.0, clearcoatRoughness: 0.1,
+
+    // Glass shader material with chromatic aberration
+    this.material = new THREE.ShaderMaterial({
+      vertexShader: glassVertexShader,
+      fragmentShader: glassFragmentShader,
+      uniforms: {
+        uTexture: { value: null },
+        uResolution: { value: new THREE.Vector2(1080 * 2, 1440 * 2) },
+        uChromaticAberration: { value: glassParams.chromaticAberration },
+        uRefraction: { value: glassParams.refraction },
+        uThickness: { value: glassParams.thickness },
+        uIor: { value: glassParams.ior },
+        uColor: { value: new THREE.Color(
+          red(this.color) / 255,
+          green(this.color) / 255,
+          blue(this.color) / 255
+        )}
+      },
+      transparent: true,
       side: THREE.DoubleSide
     });
+
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.position.set(this.pos.x, this.pos.y, this.pos.z);
     scene.add(this.mesh);
@@ -728,7 +849,9 @@ class Bubble3D {
     this.mesh.position.set(this.pos.x, this.pos.y, this.pos.z);
     const scale = this.popScale();
     this.mesh.scale.set(scale, scale, scale);
-    if (this.popping) this.material.opacity = 0.6 * scale;
+    if (this.popping && this.material.uniforms) {
+      this.material.uniforms.uColor.value.multiplyScalar(scale);
+    }
     this.deformGeometry();
   }
   deformGeometry() {
@@ -768,7 +891,7 @@ class Bubble3D {
   }
 }
 
-/* ---------- Recording (composite canvases) ---------- */
+/* ---------- Recording ---------- */
 function createCompositeCanvas() {
   const composite = document.createElement("canvas");
   composite.width = 1080 * 2;
@@ -842,7 +965,7 @@ async function stopRecording() {
     REC.setStatus("Finalizing ZIP…");
     const zipBlob = await REC.zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 }});
     const url = URL.createObjectURL(zipBlob);
-    triggerDownload(url, "bubbles_3d.zip");
+    triggerDownload(url, "bubbles_glass_3d.zip");
     REC.zip = null; REC.zipReady = false;
     REC.setStatus("Saved PNG-ZIP");
   } else if (REC.mode === "webm" && REC.webmWriter) {
@@ -850,7 +973,7 @@ async function stopRecording() {
     try {
       const blob = await REC.webmWriter.complete();
       const url = URL.createObjectURL(blob);
-      triggerDownload(url, "bubbles_3d.webm");
+      triggerDownload(url, "bubbles_glass_3d.webm");
       REC.setStatus("Saved WebM");
     } catch (e) {
       console.error(e);
