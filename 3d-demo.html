@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Bubble Simulation - p5.js + Three.js</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      background: #f5f5f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 28px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .subtitle {
+      margin: 0 0 20px 0;
+      color: #666;
+      font-size: 14px;
+    }
+
+    canvas {
+      display: block;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      border-radius: 8px;
+      background: white;
+    }
+
+    #controls-panel {
+      /* Styles are set by p5 script */
+    }
+
+    .info {
+      max-width: 1080px;
+      margin: 20px auto;
+      padding: 16px;
+      background: white;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #444;
+    }
+
+    .info h3 {
+      margin: 0 0 10px 0;
+      font-size: 16px;
+      color: #333;
+    }
+
+    .info ul {
+      margin: 8px 0;
+      padding-left: 20px;
+    }
+
+    .info li {
+      margin: 4px 0;
+    }
+
+    .info code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>3D Underwater Bubble Simulation</h1>
+  <p class="subtitle">Powered by p5.js + Three.js</p>
+
+  <!-- Canvas will be inserted here by p5.js -->
+
+  <div class="info">
+    <h3>About This Simulation</h3>
+    <p>
+      This is a fully 3D translation of the original 2D bubble simulation, combining the strengths of both p5.js and Three.js:
+    </p>
+    <ul>
+      <li><strong>p5.js</strong> handles the canvas creation, animation loop, physics calculations (using p5.Vector), Perlin noise generation, and UI controls</li>
+      <li><strong>Three.js</strong> handles all 3D rendering with PerspectiveCamera, OrbitControls, realistic materials (MeshPhysicalMaterial), and lighting</li>
+    </ul>
+
+    <h3>Features</h3>
+    <ul>
+      <li><strong>Organic Shape:</strong> Bubbles use IcosahedronGeometry with real-time vertex displacement driven by 3D Perlin noise</li>
+      <li><strong>Realistic Materials:</strong> MeshPhysicalMaterial with transmission, clearcoat, and environment reflections for soap bubble appearance</li>
+      <li><strong>3D Physics:</strong> Full 3D physics simulation with buoyancy (+Y), drag, drift, and collision detection in a 3D bounding box</li>
+      <li><strong>Contact Deformation:</strong> Visual "dents" appear at collision points through localized vertex displacement that fade over time</li>
+      <li><strong>Interactive Camera:</strong> Use OrbitControls to rotate (left-drag), pan (right-drag), and zoom (scroll)</li>
+      <li><strong>Background Images:</strong> Upload images that appear behind the 3D scene with adjustable opacity and fit mode</li>
+      <li><strong>Export:</strong> Record animations as PNG-ZIP or WebM video</li>
+    </ul>
+
+    <h3>Keyboard Shortcuts</h3>
+    <ul>
+      <li><code>-</code> / <code>=</code> — Decrease/increase bubble count</li>
+      <li><code>,</code> / <code>.</code> — Decrease/increase collision iterations</li>
+      <li><code>g</code> / <code>G</code> — Decrease/increase grid cell size</li>
+      <li><code>1</code> / <code>2</code> — Decrease/increase minimum bubble size</li>
+      <li><code>3</code> / <code>4</code> — Decrease/increase maximum bubble size</li>
+      <li><code>R</code> — Start/stop recording</li>
+    </ul>
+
+    <h3>Technical Details</h3>
+    <p>
+      The architecture bridges p5.js and Three.js by having p5.js create the WEBGL canvas, then passing that canvas element to the Three.js WebGLRenderer.
+      The Three.js renderer is configured with <code>alpha: true</code> for transparency, allowing p5.js to draw the background image underneath.
+      All physics calculations use p5.Vector for 3D positions and velocities, while Three.js handles only the visual rendering of the deformed bubble meshes.
+    </p>
+  </div>
+
+  <!-- Load p5.js -->
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+
+  <!-- Load the 3D bubble simulation script -->
+  <script src="3d-bubble-simulation.js"></script>
+</body>
+</html>
