@@ -28,11 +28,19 @@
       font-size: 14px;
     }
 
-    canvas {
-      display: block;
+    #canvas-container {
+      position: relative;
+      width: 1080px;
+      height: 1440px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       border-radius: 8px;
       background: white;
+      overflow: hidden;
+    }
+
+    #canvas-container canvas {
+      display: block;
+      border-radius: 8px;
     }
 
     #controls-panel {
@@ -79,7 +87,8 @@
   <h1>3D Underwater Bubble Simulation</h1>
   <p class="subtitle">Powered by p5.js + Three.js</p>
 
-  <!-- Canvas will be inserted here by p5.js -->
+  <!-- Canvas container (both canvases will be placed here) -->
+  <div id="canvas-container"></div>
 
   <div class="info">
     <h3>About This Simulation</h3>
@@ -114,9 +123,15 @@
 
     <h3>Technical Details</h3>
     <p>
-      The architecture bridges p5.js and Three.js by having p5.js create the WEBGL canvas, then passing that canvas element to the Three.js WebGLRenderer.
-      The Three.js renderer is configured with <code>alpha: true</code> for transparency, allowing p5.js to draw the background image underneath.
+      The architecture uses a <strong>two-canvas approach</strong> to avoid WebGL context conflicts:
+    </p>
+    <ul>
+      <li><strong>Background Canvas:</strong> p5.js draws a 2D background (white + optional uploaded image)</li>
+      <li><strong>3D Canvas:</strong> Three.js renders the 3D bubbles with transparency, layered on top using CSS positioning</li>
+    </ul>
+    <p>
       All physics calculations use p5.Vector for 3D positions and velocities, while Three.js handles only the visual rendering of the deformed bubble meshes.
+      The two canvases are stacked using absolute positioning, with the Three.js canvas having a transparent background (<code>alpha: true</code>).
     </p>
   </div>
 
